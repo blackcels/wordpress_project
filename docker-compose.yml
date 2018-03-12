@@ -1,0 +1,30 @@
+version: "3.3"
+
+services:
+    database:
+        image: mysql
+        container_name: mysql_container
+        volumes: 
+            - ./DB:/var/lib/mysql
+        environment:
+            - MYSQL_ROOT_PASSWORD=root
+        ports:
+            - 3306:3306
+
+    wordpress:
+        image: wordpress
+        container_name: wordpress2
+        links:
+            - database:mysql
+        ports:
+            - "8080:80"
+        volumes:
+            - ./wp:/var/www/html
+
+    sgbdr:
+        image: phpmyadmin/phpmyadmin
+        container_name: phpmyadmin
+        links:
+            - database:db
+        ports:
+            - 8081:80
