@@ -2,7 +2,12 @@
 
  
 add_action( 'init', 'wpdocs_codex_Gallerie_init' );
-add_action( 'init', 'create_book_taxonomies', 0 );
+add_action( 'init', 'create_gallerie_taxonomies', 0 );
+add_action('save_post', 'misha_save');
+add_action( 'admin_enqueue_scripts', 'misha_include_myuploadscript' );
+add_action( 'admin_menu', 'misha_meta_box_add' );
+
+
 /**
  * Register a custom post type called "Gallerie".
  *
@@ -51,11 +56,11 @@ function wpdocs_codex_Gallerie_init() {
         'supports'           => array( 'title', 'author', 'thumbnail', 'excerpt', 'comments' ),
     );
  
-    register_post_type( 'Gallerie', $args );
+    register_post_type( 'gallerie', $args );
 }
 
-// create two taxonomies, genres and writers for the post type "book"
-function create_book_taxonomies() {
+// create one taxonomies, genres for the post type "gallerie"
+function create_gallerie_taxonomies() {
 	// Add new taxonomy, make it hierarchical (like categories)
 	$labels = array(
 		'name'              => _x( 'Genres', 'taxonomy general name', 'textdomain' ),
@@ -80,5 +85,87 @@ function create_book_taxonomies() {
 		'rewrite'           => array( 'slug' => 'genre' ),
 	);
 
-	register_taxonomy( 'genre', array( 'Galleie' ), $args );
+	register_taxonomy( 'genre', array( 'gallerie' ), $args );
+}
+
+
+
+
+
+
+
+function misha_include_myuploadscript() {
+    /*
+     * I recommend to add additional conditions just to not to load the scipts on each page
+     * like:
+     * if ( !in_array('post-new.php','post.php') ) return;
+     */
+    if ( ! did_action( 'wp_enqueue_media' ) ) {
+        wp_enqueue_media();
+    }
+
+    wp_enqueue_script( 'myuploadscript', plugin_dir_path(__FILE__).'/js/customscript.js', array('jquery'), null, false );
+}
+
+
+
+function misha_image_uploader_field( $name, $value = '') {
+    $image = ' button">Upload image';
+    $image_size = 'full'; // it would be better to use thumbnail size here (150x150 or so)
+    $display = 'none'; // display state ot the "Remove image" button
+
+    if( $image_attributes = wp_get_attachment_image_src( $value, $image_size ) ) {
+
+        // $image_attributes[0] - image URL
+        // $image_attributes[1] - image width
+        // $image_attributes[2] - image height
+
+        $image = '"><img src="' . $image_attributes[0] . '" style="max-width:95%;display:block;" />';
+        $display = 'inline-block';
+
+    } 
+
+    return '
+    <div>
+        <a href="#" class="misha_upload_image_button' . $image . '</a>
+        <input type="hidden" name="' . $name . '" id="' . $name . '" value="' . $value . '" />
+        <a href="#" class="misha_remove_image_button" style="display:inline-block;display:' . $display . '">Remove image</a>
+    </div>';
+}
+
+/*
+ * Add a meta box
+ */
+function misha_meta_box_add() {
+    add_meta_box('mishadiv', // meta box ID
+        'More settings', // meta box title
+        'misha_print_box', // callback function that prints the meta box HTML 
+        'post', // post type where to add it
+        'normal', // priority
+        'high' ); // position
+}
+
+/*
+ * Meta Box HTML
+ */
+function misha_print_box( $post ) {
+    $meta_key = 'second_featured_img';
+    echo misha_image_uploader_field( $meta_key, get_post_meta($post->ID, $meta_key, true) );
+}
+
+/*
+ * Save Meta Box data
+ */
+function misha_save( $post_id ) {
+    if ( defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ) 
+        return $post_id;
+
+    $meta_key = 'second_featured_img';
+
+    update_post_meta( $post_id, $meta_key, $_POST[$meta_key] );
+
+    // if you would like to attach the uploaded image to this post, uncomment the line:
+    // wp_update_post( array( 'ID' => $_POST[$meta_key], 'post_parent' => $post_id ) );
+
+    return $post_id;
 }
