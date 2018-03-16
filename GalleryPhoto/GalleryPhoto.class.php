@@ -3,10 +3,8 @@
  
 add_action( 'init', 'wpdocs_codex_Gallerie_init' );
 add_action( 'init', 'create_gallerie_taxonomies', 0 );
-add_action('save_post', 'misha_save');
-add_action( 'admin_enqueue_scripts', 'misha_include_myuploadscript' );
-add_action( 'admin_menu', 'misha_meta_box_add' );
-
+add_filter( 'single_template' , 'get_gallerie_template');
+add_action('wp_enqueue_scripts', 'front_enqueue_scripts');
 
 /**
  * Register a custom post type called "Gallerie".
@@ -88,84 +86,208 @@ function create_gallerie_taxonomies() {
 	register_taxonomy( 'genre', array( 'gallerie' ), $args );
 }
 
+/**
+ * Calls the class on the post add/edit screens.
+ */
+function call_Multi_Image_Uploader()
+{
+    new Multi_Image_Uploader();
+}
 
-
-
-
-
-
-function misha_include_myuploadscript() {
-    /*
-     * I recommend to add additional conditions just to not to load the scipts on each page
-     * like:
-     * if ( !in_array('post-new.php','post.php') ) return;
-     */
-    if ( ! did_action( 'wp_enqueue_media' ) ) {
-        wp_enqueue_media();
+/**
+ * Get images attached to some post
+ *
+ * @param int $post_id
+ * @return array
+ */
+function miu_get_images($post_id=null)
+{
+    global $post;
+    if ($post_id == null)
+    {
+        $post_id = $post->ID;
     }
 
-    wp_enqueue_script( 'myuploadscript', plugin_dir_path(__FILE__).'/js/customscript.js', array('jquery'), null, false );
+    $value = get_post_meta($post_id, 'miu_images', true);
+    $images = unserialize($value);
+    $result = array();
+    if (!empty($images))
+    {
+        foreach ($images as $image)
+        {
+            $result[] = $image;
+        }
+    }
+    return $result;
 }
 
-
-
-function misha_image_uploader_field( $name, $value = '') {
-    $image = ' button">Upload image';
-    $image_size = 'full'; // it would be better to use thumbnail size here (150x150 or so)
-    $display = 'none'; // display state ot the "Remove image" button
-
-    if( $image_attributes = wp_get_attachment_image_src( $value, $image_size ) ) {
-
-        // $image_attributes[0] - image URL
-        // $image_attributes[1] - image width
-        // $image_attributes[2] - image height
-
-        $image = '"><img src="' . $image_attributes[0] . '" style="max-width:95%;display:block;" />';
-        $display = 'inline-block';
-
-    } 
-
-    return '
-    <div>
-        <a href="#" class="misha_upload_image_button' . $image . '</a>
-        <input type="hidden" name="' . $name . '" id="' . $name . '" value="' . $value . '" />
-        <a href="#" class="misha_remove_image_button" style="display:inline-block;display:' . $display . '">Remove image</a>
-    </div>';
+if (is_admin())
+{
+    add_action('load-post.php', 'call_Multi_Image_Uploader');
+    add_action('load-post-new.php', 'call_Multi_Image_Uploader');
 }
 
-/*
- * Add a meta box
+/**
+ * Multi_Image_Uploader
  */
-function misha_meta_box_add() {
-    add_meta_box('mishadiv', // meta box ID
-        'More settings', // meta box title
-        'misha_print_box', // callback function that prints the meta box HTML 
-        'post', // post type where to add it
-        'normal', // priority
-        'high' ); // position
+class Multi_Image_Uploader{
+
+    var $post_types = array();
+
+    /**
+     * Initialize Multi_Image_Uploader
+     */
+    public function __construct()
+    {
+        $this->post_types = array('post', 'page', 'gallerie');     //limit meta box to certain post types
+        add_action('add_meta_boxes', array($this, 'add_meta_box'));
+        add_action('save_post', array($this, 'save'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
+        
+    }
+
+    /**
+     * Adds the meta box container.
+     */
+    public function add_meta_box($post_type)
+    {
+
+        if (in_array($post_type, $this->post_types))
+        {
+            add_meta_box(
+                    'multi_image_upload_meta_box'
+                    , __('Upload Multiple Images', 'miu_textdomain')
+                    , array($this, 'render_meta_box_content')
+                    , $post_type
+                    , 'advanced'
+                    , 'high'
+            );
+        }
+    }
+
+    /**
+     * Save the images when the post is saved.
+     *
+     * @param int $post_id The ID of the post being saved.
+     */
+    public function save($post_id)
+    {
+        /*
+         * We need to verify this came from the our screen and with proper authorization,
+         * because save_post can be triggered at other times.
+         */
+
+        // Check if our nonce is set.
+        if (!isset($_POST['miu_inner_custom_box_nonce']))
+            return $post_id;
+
+        $nonce = $_POST['miu_inner_custom_box_nonce'];
+
+        // Verify that the nonce is valid.
+        if (!wp_verify_nonce($nonce, 'miu_inner_custom_box'))
+            return $post_id;
+
+        // If this is an autosave, our form has not been submitted,
+        //     so we don't want to do anything.
+        if (defined('DOING_AUTOSAVE') && DOING_AUTOSAVE)
+            return $post_id;
+
+        // Check the user's permissions.
+        if ('page' == $_POST['post_type'])
+        {
+
+            if (!current_user_can('edit_page', $post_id))
+                return $post_id;
+        } else
+        {
+
+            if (!current_user_can('edit_post', $post_id))
+                return $post_id;
+        }
+
+        /* OK, its safe for us to save the data now. */
+
+        // Validate user input.
+        $posted_images = $_POST['miu_images'];
+        $miu_images = array();
+        if (!empty($posted_images))
+        {
+            foreach ($posted_images as $image_url)
+            {
+                if (!empty($image_url))
+                    $miu_images[] = esc_url_raw($image_url);
+            }
+        }
+
+        // Update the miu_images meta field.
+        update_post_meta($post_id, 'miu_images', serialize($miu_images));
+    }
+
+    /**
+     * Render Meta Box content.
+     *
+     * @param WP_Post $post The post object.
+     */
+    public function render_meta_box_content($post)
+    {
+
+        // Add an nonce field so we can check for it later.
+        wp_nonce_field('miu_inner_custom_box', 'miu_inner_custom_box_nonce');
+
+        // Use get_post_meta to retrieve an existing value from the database.
+        $value = get_post_meta($post->ID, 'miu_images', true);
+
+        $metabox_content = '<div id="miu_images"></div><input type="button" onClick="addRow()" value="Ajouter Emplacement" class="button" />';
+        echo $metabox_content;
+
+        $images = unserialize($value);
+
+        $script = "<script>
+            itemsCount= 0;";
+        if (!empty($images))
+        {
+            foreach ($images as $image)
+            {
+                $script.="addRow('{$image}');";
+            }
+        }
+        $script .="</script>";
+        echo $script;
+    }
+
+    function enqueue_scripts($hook)
+    {
+        if ('post.php' != $hook && 'post-edit.php' != $hook && 'post-new.php' != $hook)
+            return;
+        wp_enqueue_script('miu_script', plugin_dir_url(__FILE__) . 'js/miu_script.js', array('jquery'));
+    }
+
+    
 }
 
-/*
- * Meta Box HTML
- */
-function misha_print_box( $post ) {
-    $meta_key = 'second_featured_img';
-    echo misha_image_uploader_field( $meta_key, get_post_meta($post->ID, $meta_key, true) );
+function front_enqueue_scripts(){
+    wp_enqueue_style('style',plugin_dir_url(__FILE__) . 'css/jcarousel.connected-carousels.css',false,'all');
+    wp_enqueue_script('carousel_script', plugin_dir_url(__FILE__) . 'js/jcarousel.connected-carousels.js', array('jquery'));
 }
 
-/*
- * Save Meta Box data
- */
-function misha_save( $post_id ) {
-    if ( defined('DOING_AUTOSAVE') && DOING_AUTOSAVE ) 
-        return $post_id;
 
-    $meta_key = 'second_featured_img';
+function gallerieSliderTemplate($single){
+    global $post;
 
-    update_post_meta( $post_id, $meta_key, $_POST[$meta_key] );
+    /* Checks for single template by post type */
+    if ( $post->post_type == 'gallerie' ) {
+        if ( file_exists( plugin_dir_url(__FILE__) . 'template/GallerieSlider.php' ) ) {
+            return plugin_dir_url(__FILE__) . 'template/GallerieSlider.php';
+        }
+    }
 
-    // if you would like to attach the uploaded image to this post, uncomment the line:
-    // wp_update_post( array( 'ID' => $_POST[$meta_key], 'post_parent' => $post_id ) );
-
-    return $post_id;
+    return $single;
 }
+
+    function get_gallerie_template($single_template) {
+       global $wp_query, $post;
+       if ($post->post_type == 'gallerie'){
+           $single_template = plugin_dir_path(__FILE__) . '/template/GallerieSlider.php';
+       }
+       return $single_template;
+   }
